@@ -2,23 +2,23 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>ぬりえアプリ（バケツ塗り対応）</title>
+  <title>ぬりえアプリ（バケツ塗り・Undo/Redo対応）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body { font-family: sans-serif; text-align: center; }
     canvas { border: 1px solid #ccc; touch-action: none; max-width: 100%; height: auto; }
     #controls { margin-top: 10px; }
     #controls input, #controls button { margin: 5px; }
- .cursor-brush {
-  cursor: url('pen-cursor.png') 0 32, auto;
-}
-.cursor-bucket {
-  cursor: url('bucket-cursor.png') 16 16, auto;
-}
+    .cursor-brush {
+      cursor: url('pen-cursor.png') 0 32, auto;
+    }
+    .cursor-bucket {
+      cursor: url('bucket-cursor.png') 16 16, auto;
+    }
   </style>
 </head>
 <body>
-  <h2>ぬりえアプリ（バケツ塗り対応）</h2>
+  <h2>ぬりえアプリ（バケツ塗り・Undo/Redo対応）</h2>
   <canvas id="coloringCanvas" width="300" height="300"></canvas>
 
   <div id="controls">
@@ -26,6 +26,8 @@
     ペンサイズ: <input type="range" id="brushSize" min="1" max="30" value="5">
     <button id="brushBtn">ペン</button>
     <button id="bucketBtn">バケツ</button>
+    <button id="undoBtn">戻る</button>
+    <button id="redoBtn">進む</button>
     <button id="clearBtn">クリア</button>
     <button id="saveBtn">保存</button>
   </div>
@@ -39,41 +41,56 @@
     const saveBtn = document.getElementById('saveBtn');
     const brushBtn = document.getElementById('brushBtn');
     const bucketBtn = document.getElementById('bucketBtn');
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
 
     let mode = 'brush';
+    let painting = false;
 
     const img = new Image();
-    img.crossOrigin = 'Anonymous'; // 重要: CORS対応
-    img.src = 'line_art_transparent.png'; // 同一ドメイン or CORS許可された画像URLにしてください
+    img.crossOrigin = 'Anonymous';
+    img.src = 'line_art_transparent.png'; // 任意の画像に置き換えてOK
     img.onload = () => {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      saveState(); // 初期状態も履歴に
     };
 
-    let painting = false;
+    const history = [];
+    let historyStep = -1;
+
+    function saveState() {
+      history.length = historyStep + 1;
+      history.push(canvas.toDataURL());
+      historyStep++;
+    }
+
+    function restoreState() {
+      const img = new Image();
+      img.src = history[historyStep];
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+    }
 
     function getPosition(e) {
       const rect = canvas.getBoundingClientRect();
-      if (e.touches) {
-        return {
-          x: Math.floor(e.touches[0].clientX - rect.left),
-          y: Math.floor(e.touches[0].clientY - rect.top)
-        };
-      } else {
-        return {
-          x: Math.floor(e.clientX - rect.left),
-          y: Math.floor(e.clientY - rect.top)
-        };
-      }
+      return {
+        x: Math.floor((e.touches ? e.touches[0].clientX : e.clientX) - rect.left),
+        y: Math.floor((e.touches ? e.touches[0].clientY : e.clientY) - rect.top)
+      };
     }
 
     function startDrawing(e) {
       e.preventDefault();
       if (mode === 'brush') {
         painting = true;
+        saveState();
         draw(e);
       } else if (mode === 'bucket') {
         const pos = getPosition(e);
         const fillColor = hexToRgba(colorPicker.value);
+        saveState();
         floodFill(pos.x, pos.y, fillColor);
       }
     }
@@ -110,8 +127,6 @@
     }
 
     function floodFill(x, y, fillColor) {
-      if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
-
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imgData.data;
       const width = imgData.width;
@@ -123,7 +138,6 @@
       if (colorMatch(startColor, fillColor)) return;
 
       const stack = [[x, y]];
-
       while (stack.length > 0) {
         const [cx, cy] = stack.pop();
         if (cx < 0 || cy < 0 || cx >= width || cy >= height) continue;
@@ -143,11 +157,9 @@
           stack.push([cx, cy - 1]);
         }
       }
-
       ctx.putImageData(imgData, 0, 0);
     }
 
-    // イベント登録
     canvas.addEventListener('mousedown', startDrawing);
     canvas.addEventListener('mouseup', endDrawing);
     canvas.addEventListener('mousemove', draw);
@@ -156,6 +168,7 @@
     canvas.addEventListener('touchmove', draw);
 
     clearBtn.addEventListener('click', () => {
+      saveState();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     });
@@ -167,31 +180,31 @@
       link.click();
     });
 
-    brushBtn.addEventListener('click', () => mode = 'brush');
-    bucketBtn.addEventListener('click', () => mode = 'bucket');
-
     brushBtn.addEventListener('click', () => {
-  mode = 'brush';
-  canvas.classList.remove('cursor-bucket');
-});
+      mode = 'brush';
+      canvas.classList.remove('cursor-bucket');
+      canvas.classList.add('cursor-brush');
+    });
 
-bucketBtn.addEventListener('click', () => {
-  mode = 'bucket';
-  canvas.classList.add('cursor-bucket');
-});
+    bucketBtn.addEventListener('click', () => {
+      mode = 'bucket';
+      canvas.classList.remove('cursor-brush');
+      canvas.classList.add('cursor-bucket');
+    });
 
-brushBtn.addEventListener('click', () => {
-  mode = 'brush';
-  canvas.classList.remove('cursor-bucket');
-  canvas.classList.add('cursor-brush');
-});
+    undoBtn.addEventListener('click', () => {
+      if (historyStep > 0) {
+        historyStep--;
+        restoreState();
+      }
+    });
 
-bucketBtn.addEventListener('click', () => {
-  mode = 'bucket';
-  canvas.classList.remove('cursor-brush');
-  canvas.classList.add('cursor-bucket');
-});
-
+    redoBtn.addEventListener('click', () => {
+      if (historyStep < history.length - 1) {
+        historyStep++;
+        restoreState();
+      }
+    });
   </script>
 </body>
 </html>
